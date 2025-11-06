@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { DatePicker } from '@/components/ui/date-picker';
 import type { FieldType, CellValue, Field, Row, Cell } from '@/types';
 
 interface SheetData {
@@ -325,10 +326,17 @@ export default function SheetDetailPage() {
                           <SelectItem value="text">单行文本</SelectItem>
                           <SelectItem value="longText">多行文本</SelectItem>
                           <SelectItem value="number">数字</SelectItem>
-                          <SelectItem value="date">日期</SelectItem>
-                          <SelectItem value="datetime">日期时间</SelectItem>
+                          <SelectItem value="date">日期（仅年月日）</SelectItem>
+                          <SelectItem value="datetime">日期时间（年月日+时分）</SelectItem>
                         </SelectContent>
                       </Select>
+                      <p className="text-xs text-gray-500">
+                        {newFieldType === 'date' && '日期：只显示年月日，例如：2024/1/15'}
+                        {newFieldType === 'datetime' && '日期时间：显示年月日和时分，例如：2024/1/15 14:30'}
+                        {newFieldType === 'text' && '单行文本：简短的文字内容'}
+                        {newFieldType === 'longText' && '多行文本：较长的文字内容'}
+                        {newFieldType === 'number' && '数字：可进行数学运算的数值'}
+                      </p>
                     </div>
                     <div className="flex justify-end gap-2">
                       <Button type="button" variant="outline" onClick={() => setAddFieldDialogOpen(false)}>
@@ -456,14 +464,28 @@ function CellEditor({
     if (cell.value === null || cell.value === '') {
       return '-';
     }
-    if (field.type === 'date' || field.type === 'datetime') {
-      return new Date(cell.value as string).toLocaleDateString('zh-CN');
+    if (field.type === 'date') {
+      const date = new Date(cell.value as string);
+      return date.toLocaleDateString('zh-CN');
+    }
+    if (field.type === 'datetime') {
+      const date = new Date(cell.value as string);
+      return date.toLocaleString('zh-CN', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
     }
     return String(cell.value);
   };
 
   const handleClick = () => {
-    setValue(cell.value ? String(cell.value) : '');
+    // 对于日期类型，不需要设置 value，直接编辑
+    if (field.type !== 'date' && field.type !== 'datetime') {
+      setValue(cell.value ? String(cell.value) : '');
+    }
     setIsEditing(true);
   };
 
@@ -488,6 +510,16 @@ function CellEditor({
     }
   };
 
+  const handleDateChange = (date: Date | undefined) => {
+    if (date) {
+      const isoString = date.toISOString();
+      onUpdate(isoString);
+    } else {
+      onUpdate(null);
+    }
+    setIsEditing(false);
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && field.type !== 'longText') {
       e.preventDefault();
@@ -509,6 +541,20 @@ function CellEditor({
     );
   }
 
+  // 日期选择器
+  if (field.type === 'date' || field.type === 'datetime') {
+    return (
+      <div className="min-w-[200px]">
+        <DatePicker
+          value={cell.value ? new Date(cell.value as string) : undefined}
+          onChange={handleDateChange}
+          placeholder={field.type === 'date' ? '选择日期' : '选择日期时间'}
+        />
+      </div>
+    );
+  }
+
+  // 多行文本
   if (field.type === 'longText') {
     return (
       <Textarea
@@ -523,6 +569,7 @@ function CellEditor({
     );
   }
 
+  // 数字
   if (field.type === 'number') {
     return (
       <Input
@@ -537,6 +584,7 @@ function CellEditor({
     );
   }
 
+  // 默认文本
   return (
     <Input
       type="text"
