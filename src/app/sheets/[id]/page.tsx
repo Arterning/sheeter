@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import { Plus, ArrowLeft } from 'lucide-react';
+import { Plus, ArrowLeft, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -107,8 +107,32 @@ export default function SheetDetailPage() {
     }
   };
 
+  // 删除行
+  const handleDeleteRow = async (rowId: string) => {
+    if (!confirm('确定要删除这一行吗？')) {
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/rows/${rowId}`, {
+        method: 'DELETE',
+      });
+
+      if (res.ok) {
+        await loadData();
+      } else {
+        const data = await res.json();
+        alert(`删除行失败: ${data.error || '未知错误'}`);
+      }
+    } catch (error) {
+      console.error('Error deleting row:', error);
+      alert('删除行时发生错误');
+    }
+  };
+
   // 更新单元格
   const handleCellUpdate = async (cellId: string, value: CellValue) => {
+    console.log('更新单元格:', { cellId, value });
     if (!cellId) return;
 
     try {
@@ -238,6 +262,7 @@ export default function SheetDetailPage() {
             <table className="w-full">
               <thead className="bg-gray-50 border-b">
                 <tr>
+                  <th className="px-4 py-3 w-12"></th>
                   {sheetData.fields.map((field) => (
                     <th
                       key={field.id}
@@ -252,7 +277,7 @@ export default function SheetDetailPage() {
                 {sheetData.rows.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={sheetData.fields.length || 1}
+                      colSpan={(sheetData.fields.length || 1) + 1}
                       className="px-4 py-8 text-center text-gray-500"
                     >
                       暂无数据，点击"添加行"或"添加字段"开始
@@ -261,6 +286,16 @@ export default function SheetDetailPage() {
                 ) : (
                   sheetData.rows.map((row) => (
                     <tr key={row.id} className="hover:bg-gray-50">
+                      <td className="px-4 py-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleDeleteRow(row.id)}
+                          className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </td>
                       {sheetData.fields.map((field) => {
                         const cell = getCellValue(row.id, field.id);
                         return (
@@ -314,6 +349,7 @@ function CellEditor({
   };
 
   const handleSave = () => {
+    console.log('保存单元格:', { field: field.name, oldValue: cell.value, newValue: value });
     setIsEditing(false);
     let finalValue: CellValue = value;
 
@@ -323,15 +359,22 @@ function CellEditor({
       finalValue = null;
     }
 
+    console.log('最终值:', finalValue, '原值:', cell.value);
+
     if (finalValue !== cell.value) {
+      console.log('调用更新');
       onUpdate(finalValue);
+    } else {
+      console.log('值未改变，跳过更新');
     }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && field.type !== 'longText') {
+      e.preventDefault();
       handleSave();
     } else if (e.key === 'Escape') {
+      e.preventDefault();
       setIsEditing(false);
     }
   };
