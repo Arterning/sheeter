@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import { Plus, ArrowLeft, X, Download } from 'lucide-react';
+import { Plus, ArrowLeft, X, Download, GripVertical } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
@@ -11,6 +11,24 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { DatePicker } from '@/components/ui/date-picker';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+  horizontalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import type { FieldType, CellValue, Field, Row, Cell } from '@/types';
 
 interface SheetData {
@@ -36,6 +54,18 @@ export default function SheetDetailPage() {
   const [newFieldType, setNewFieldType] = useState<FieldType>('text');
   const [creating, setCreating] = useState(false);
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
+
+  // 配置 dnd-kit sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8, // 需要拖动8px才触发，避免误触
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
 
   // 加载表格数据
   const loadData = async () => {
@@ -258,6 +288,88 @@ export default function SheetDetailPage() {
     return cell || { id: '', rowId, fieldId, value: null };
   };
 
+  // 处理行拖动结束
+  const handleRowDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event;
+
+    if (!over || active.id === over.id || !sheetData) {
+      return;
+    }
+
+    const oldIndex = sheetData.rows.findIndex((r) => r.id === active.id);
+    const newIndex = sheetData.rows.findIndex((r) => r.id === over.id);
+
+    if (oldIndex === -1 || newIndex === -1) {
+      return;
+    }
+
+    // 更新本地状态
+    const newRows = arrayMove(sheetData.rows, oldIndex, newIndex);
+    setSheetData({
+      ...sheetData,
+      rows: newRows,
+    });
+
+    // 保存到服务器
+    try {
+      const orders = newRows.map((row, index) => ({
+        id: row.id,
+        order: index,
+      }));
+
+      await fetch(`/api/sheets/${sheetId}/rows/reorder`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orders }),
+      });
+    } catch (error) {
+      console.error('Error reordering rows:', error);
+      // 重新加载数据以恢复正确的顺序
+      loadData();
+    }
+  };
+
+  // 处理列拖动结束
+  const handleFieldDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event;
+
+    if (!over || active.id === over.id || !sheetData) {
+      return;
+    }
+
+    const oldIndex = sheetData.fields.findIndex((f) => f.id === active.id);
+    const newIndex = sheetData.fields.findIndex((f) => f.id === over.id);
+
+    if (oldIndex === -1 || newIndex === -1) {
+      return;
+    }
+
+    // 更新本地状态
+    const newFields = arrayMove(sheetData.fields, oldIndex, newIndex);
+    setSheetData({
+      ...sheetData,
+      fields: newFields,
+    });
+
+    // 保存到服务器
+    try {
+      const orders = newFields.map((field, index) => ({
+        id: field.id,
+        order: index,
+      }));
+
+      await fetch(`/api/sheets/${sheetId}/fields/reorder`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orders }),
+      });
+    } catch (error) {
+      console.error('Error reordering fields:', error);
+      // 重新加载数据以恢复正确的顺序
+      loadData();
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -374,76 +486,192 @@ export default function SheetDetailPage() {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-gray-50 border-b">
-                <tr>
-                  <th className="px-4 py-3 w-12">
-                    <Checkbox
-                      checked={sheetData.rows.length > 0 && selectedRows.size === sheetData.rows.length}
-                      onCheckedChange={toggleSelectAll}
-                    />
-                  </th>
-                  {sheetData.fields.map((field) => (
-                    <th
-                      key={field.id}
-                      className="px-4 py-3 text-left text-sm font-semibold text-gray-900"
-                    >
-                      {field.name}
-                    </th>
-                  ))}
-                  <th className="px-4 py-3 w-12"></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-200">
-                {sheetData.rows.length === 0 ? (
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleFieldDragEnd}
+            >
+              <table className="w-full">
+                <thead className="bg-gray-50 border-b">
                   <tr>
-                    <td
-                      colSpan={(sheetData.fields.length || 1) + 2}
-                      className="px-4 py-8 text-center text-gray-500"
+                    <th className="px-4 py-3 w-24 bg-gray-50">
+                      <Checkbox
+                        checked={sheetData.rows.length > 0 && selectedRows.size === sheetData.rows.length}
+                        onCheckedChange={toggleSelectAll}
+                      />
+                    </th>
+                    <SortableContext
+                      items={sheetData.fields.map((f) => f.id)}
+                      strategy={horizontalListSortingStrategy}
                     >
-                      暂无数据，点击"添加行"或"添加字段"开始
-                    </td>
+                      {sheetData.fields.map((field) => (
+                        <SortableFieldHeader key={field.id} field={field} />
+                      ))}
+                    </SortableContext>
+                    <th className="px-4 py-3 w-12 bg-gray-50"></th>
                   </tr>
-                ) : (
-                  sheetData.rows.map((row) => (
-                    <tr key={row.id} className="hover:bg-gray-50">
-                      <td className="px-4 py-2">
-                        <Checkbox
-                          checked={selectedRows.has(row.id)}
-                          onCheckedChange={() => toggleRowSelection(row.id)}
-                        />
-                      </td>
-                      {sheetData.fields.map((field) => {
-                        const cell = getCellValue(row.id, field.id);
-                        return (
-                          <td key={field.id} className="px-4 py-2">
-                            <CellEditor
-                              cell={cell}
-                              field={field}
-                              onUpdate={(value) => handleCellUpdate(cell.id, value)}
-                            />
-                          </td>
-                        );
-                      })}
-                      <td className="px-4 py-2">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleDeleteRow(row.id)}
-                          className="h-6 w-6 p-0 text-gray-400 hover:text-red-600 hover:bg-red-50"
-                        >
-                          <X className="h-3 w-3" />
-                        </Button>
+                </thead>
+              </table>
+            </DndContext>
+
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleRowDragEnd}
+            >
+              <table className="w-full">
+                <tbody className="divide-y divide-gray-200">
+                  {sheetData.rows.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={(sheetData.fields.length || 1) + 2}
+                        className="px-4 py-8 text-center text-gray-500"
+                      >
+                        暂无数据，点击"添加行"或"添加字段"开始
                       </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                  ) : (
+                    <SortableContext
+                      items={sheetData.rows.map((r) => r.id)}
+                      strategy={verticalListSortingStrategy}
+                    >
+                      {sheetData.rows.map((row) => (
+                        <SortableRow
+                          key={row.id}
+                          row={row}
+                          fields={sheetData.fields}
+                          sheetData={sheetData}
+                          getCellValue={getCellValue}
+                          handleCellUpdate={handleCellUpdate}
+                          selectedRows={selectedRows}
+                          toggleRowSelection={toggleRowSelection}
+                          handleDeleteRow={handleDeleteRow}
+                        />
+                      ))}
+                    </SortableContext>
+                  )}
+                </tbody>
+              </table>
+            </DndContext>
           </div>
         </div>
       </main>
     </div>
+  );
+}
+
+// 可排序的列头
+function SortableFieldHeader({ field }: { field: Field }) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: field.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <th
+      ref={setNodeRef}
+      style={style}
+      className="px-4 py-3 text-left text-sm font-semibold text-gray-900 bg-gray-50"
+    >
+      <div className="flex items-center gap-2">
+        <button
+          {...attributes}
+          {...listeners}
+          className="cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-600"
+        >
+          <GripVertical className="h-4 w-4" />
+        </button>
+        <span>{field.name}</span>
+      </div>
+    </th>
+  );
+}
+
+// 可排序的行
+function SortableRow({
+  row,
+  fields,
+  sheetData,
+  getCellValue,
+  handleCellUpdate,
+  selectedRows,
+  toggleRowSelection,
+  handleDeleteRow,
+}: {
+  row: Row;
+  fields: Field[];
+  sheetData: SheetData;
+  getCellValue: (rowId: string, fieldId: string) => Cell;
+  handleCellUpdate: (cellId: string, value: CellValue) => void;
+  selectedRows: Set<string>;
+  toggleRowSelection: (rowId: string) => void;
+  handleDeleteRow: (rowId: string) => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: row.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <tr ref={setNodeRef} style={style} className="hover:bg-gray-50">
+      <td className="px-4 py-2">
+        <div className="flex items-center gap-2">
+          <button
+            {...attributes}
+            {...listeners}
+            className="cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-600"
+          >
+            <GripVertical className="h-4 w-4" />
+          </button>
+          <Checkbox
+            checked={selectedRows.has(row.id)}
+            onCheckedChange={() => toggleRowSelection(row.id)}
+          />
+        </div>
+      </td>
+      {fields.map((field) => {
+        const cell = getCellValue(row.id, field.id);
+        return (
+          <td key={field.id} className="px-4 py-2">
+            <CellEditor
+              cell={cell}
+              field={field}
+              onUpdate={(value) => handleCellUpdate(cell.id, value)}
+            />
+          </td>
+        );
+      })}
+      <td className="px-4 py-2">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => handleDeleteRow(row.id)}
+          className="h-6 w-6 p-0 text-gray-400 hover:text-red-600 hover:bg-red-50"
+        >
+          <X className="h-3 w-3" />
+        </Button>
+      </td>
+    </tr>
   );
 }
 
