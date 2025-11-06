@@ -14,6 +14,23 @@ pnpm dev
 bun dev
 ```
 
+
+Create .env file
+
+```bash
+# Database
+# 请替换为您的实际 PostgreSQL 连接字符串
+# 格式: postgresql://username:password@host:port/database
+DATABASE_URL=postgresql://postgres:123456@localhost:5432/sheeter
+
+# Better Auth
+# 请生成一个安全的随机字符串替换 your-secret-key-here
+AUTH_SECRET=your-secret-key-here
+AUTH_URL=http://localhost:3000
+NEXT_PUBLIC_AUTH_URL=http://localhost:3000
+
+```
+
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
