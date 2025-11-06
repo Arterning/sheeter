@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import { Plus, ArrowLeft, Trash2 } from 'lucide-react';
+import { Plus, ArrowLeft, X, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
@@ -33,6 +34,7 @@ export default function SheetDetailPage() {
   const [newFieldName, setNewFieldName] = useState('');
   const [newFieldType, setNewFieldType] = useState<FieldType>('text');
   const [creating, setCreating] = useState(false);
+  const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
 
   // 加载表格数据
   const loadData = async () => {
@@ -130,6 +132,93 @@ export default function SheetDetailPage() {
     }
   };
 
+  // 批量删除
+  const handleBatchDelete = async () => {
+    if (selectedRows.size === 0) {
+      alert('请先选择要删除的行');
+      return;
+    }
+
+    if (!confirm(`确定要删除选中的 ${selectedRows.size} 行吗？`)) {
+      return;
+    }
+
+    try {
+      await Promise.all(
+        Array.from(selectedRows).map((rowId) =>
+          fetch(`/api/rows/${rowId}`, { method: 'DELETE' })
+        )
+      );
+      setSelectedRows(new Set());
+      await loadData();
+    } catch (error) {
+      console.error('Error batch deleting rows:', error);
+      alert('批量删除时发生错误');
+    }
+  };
+
+  // 导出CSV
+  const handleExportCSV = () => {
+    if (!sheetData || selectedRows.size === 0) {
+      alert('请先选择要导出的行');
+      return;
+    }
+
+    // 构建CSV内容
+    const headers = sheetData.fields.map((f) => f.name).join(',');
+    const selectedRowsData = sheetData.rows.filter((row) => selectedRows.has(row.id));
+
+    const rows = selectedRowsData.map((row) => {
+      return sheetData.fields
+        .map((field) => {
+          const cell = getCellValue(row.id, field.id);
+          const value = cell.value ?? '';
+          // 处理包含逗号或引号的值
+          const strValue = String(value);
+          if (strValue.includes(',') || strValue.includes('"') || strValue.includes('\n')) {
+            return `"${strValue.replace(/"/g, '""')}"`;
+          }
+          return strValue;
+        })
+        .join(',');
+    });
+
+    const csv = [headers, ...rows].join('\n');
+
+    // 下载CSV文件
+    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `${sheetData.sheet.name}_${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // 切换行选择
+  const toggleRowSelection = (rowId: string) => {
+    const newSelected = new Set(selectedRows);
+    if (newSelected.has(rowId)) {
+      newSelected.delete(rowId);
+    } else {
+      newSelected.add(rowId);
+    }
+    setSelectedRows(newSelected);
+  };
+
+  // 全选/取消全选
+  const toggleSelectAll = () => {
+    if (!sheetData) return;
+
+    if (selectedRows.size === sheetData.rows.length) {
+      setSelectedRows(new Set());
+    } else {
+      setSelectedRows(new Set(sheetData.rows.map((r) => r.id)));
+    }
+  };
+
   // 更新单元格
   const handleCellUpdate = async (cellId: string, value: CellValue) => {
     console.log('更新单元格:', { cellId, value });
@@ -201,68 +290,91 @@ export default function SheetDetailPage() {
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="bg-white rounded-lg shadow">
-          <div className="p-4 border-b flex gap-2">
-            <Dialog open={addFieldDialogOpen} onOpenChange={setAddFieldDialogOpen}>
-              <DialogTrigger asChild>
-                <Button variant="outline" size="sm">
-                  <Plus className="h-4 w-4 mr-2" />
-                  添加字段
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>添加新字段</DialogTitle>
-                  <DialogDescription>为表格添加一个新列</DialogDescription>
-                </DialogHeader>
-                <form onSubmit={handleAddField} className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="fieldName">字段名称</Label>
-                    <Input
-                      id="fieldName"
-                      value={newFieldName}
-                      onChange={(e) => setNewFieldName(e.target.value)}
-                      placeholder="请输入字段名称"
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="fieldType">字段类型</Label>
-                    <Select value={newFieldType} onValueChange={(value) => setNewFieldType(value as FieldType)}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="text">单行文本</SelectItem>
-                        <SelectItem value="longText">多行文本</SelectItem>
-                        <SelectItem value="number">数字</SelectItem>
-                        <SelectItem value="date">日期</SelectItem>
-                        <SelectItem value="datetime">日期时间</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="flex justify-end gap-2">
-                    <Button type="button" variant="outline" onClick={() => setAddFieldDialogOpen(false)}>
-                      取消
-                    </Button>
-                    <Button type="submit" disabled={creating}>
-                      {creating ? '创建中...' : '创建'}
-                    </Button>
-                  </div>
-                </form>
-              </DialogContent>
-            </Dialog>
+          <div className="p-4 border-b flex justify-between items-center">
+            <div className="flex gap-2">
+              <Dialog open={addFieldDialogOpen} onOpenChange={setAddFieldDialogOpen}>
+                <DialogTrigger asChild>
+                  <Button variant="outline" size="sm">
+                    <Plus className="h-4 w-4 mr-2" />
+                    添加字段
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>添加新字段</DialogTitle>
+                    <DialogDescription>为表格添加一个新列</DialogDescription>
+                  </DialogHeader>
+                  <form onSubmit={handleAddField} className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="fieldName">字段名称</Label>
+                      <Input
+                        id="fieldName"
+                        value={newFieldName}
+                        onChange={(e) => setNewFieldName(e.target.value)}
+                        placeholder="请输入字段名称"
+                        required
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="fieldType">字段类型</Label>
+                      <Select value={newFieldType} onValueChange={(value) => setNewFieldType(value as FieldType)}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="text">单行文本</SelectItem>
+                          <SelectItem value="longText">多行文本</SelectItem>
+                          <SelectItem value="number">数字</SelectItem>
+                          <SelectItem value="date">日期</SelectItem>
+                          <SelectItem value="datetime">日期时间</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex justify-end gap-2">
+                      <Button type="button" variant="outline" onClick={() => setAddFieldDialogOpen(false)}>
+                        取消
+                      </Button>
+                      <Button type="submit" disabled={creating}>
+                        {creating ? '创建中...' : '创建'}
+                      </Button>
+                    </div>
+                  </form>
+                </DialogContent>
+              </Dialog>
 
-            <Button variant="outline" size="sm" onClick={handleAddRow}>
-              <Plus className="h-4 w-4 mr-2" />
-              添加行
-            </Button>
+              <Button variant="outline" size="sm" onClick={handleAddRow}>
+                <Plus className="h-4 w-4 mr-2" />
+                添加行
+              </Button>
+            </div>
+
+            {selectedRows.size > 0 && (
+              <div className="flex gap-2">
+                <span className="text-sm text-gray-600 flex items-center">
+                  已选择 {selectedRows.size} 行
+                </span>
+                <Button variant="outline" size="sm" onClick={handleExportCSV}>
+                  <Download className="h-4 w-4 mr-2" />
+                  导出CSV
+                </Button>
+                <Button variant="destructive" size="sm" onClick={handleBatchDelete}>
+                  <X className="h-4 w-4 mr-2" />
+                  批量删除
+                </Button>
+              </div>
+            )}
           </div>
 
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead className="bg-gray-50 border-b">
                 <tr>
-                  <th className="px-4 py-3 w-12"></th>
+                  <th className="px-4 py-3 w-12">
+                    <Checkbox
+                      checked={sheetData.rows.length > 0 && selectedRows.size === sheetData.rows.length}
+                      onCheckedChange={toggleSelectAll}
+                    />
+                  </th>
                   {sheetData.fields.map((field) => (
                     <th
                       key={field.id}
@@ -271,13 +383,14 @@ export default function SheetDetailPage() {
                       {field.name}
                     </th>
                   ))}
+                  <th className="px-4 py-3 w-12"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
                 {sheetData.rows.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={(sheetData.fields.length || 1) + 1}
+                      colSpan={(sheetData.fields.length || 1) + 2}
                       className="px-4 py-8 text-center text-gray-500"
                     >
                       暂无数据，点击"添加行"或"添加字段"开始
@@ -287,14 +400,10 @@ export default function SheetDetailPage() {
                   sheetData.rows.map((row) => (
                     <tr key={row.id} className="hover:bg-gray-50">
                       <td className="px-4 py-2">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleDeleteRow(row.id)}
-                          className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        <Checkbox
+                          checked={selectedRows.has(row.id)}
+                          onCheckedChange={() => toggleRowSelection(row.id)}
+                        />
                       </td>
                       {sheetData.fields.map((field) => {
                         const cell = getCellValue(row.id, field.id);
@@ -308,6 +417,16 @@ export default function SheetDetailPage() {
                           </td>
                         );
                       })}
+                      <td className="px-4 py-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleDeleteRow(row.id)}
+                          className="h-6 w-6 p-0 text-gray-400 hover:text-red-600 hover:bg-red-50"
+                        >
+                          <X className="h-3 w-3" />
+                        </Button>
+                      </td>
                     </tr>
                   ))
                 )}
