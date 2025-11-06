@@ -2,43 +2,14 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import {
-  useReactTable,
-  getCoreRowModel,
-  flexRender,
-  type ColumnDef,
-} from '@tanstack/react-table';
-import { Plus, ArrowLeft, Settings } from 'lucide-react';
+import { Plus, ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { DatePicker } from '@/components/ui/date-picker';
 import { Textarea } from '@/components/ui/textarea';
-import { useSession } from '@/lib/auth-client';
-import type { FieldType, CellValue } from '@/db/schema';
-
-interface Field {
-  id: string;
-  name: string;
-  type: FieldType;
-  options?: any;
-  order: number;
-}
-
-interface Row {
-  id: string;
-  order: number;
-}
-
-interface Cell {
-  id: string;
-  rowId: string;
-  fieldId: string;
-  value: CellValue;
-}
+import type { FieldType, CellValue, Field, Row, Cell } from '@/types';
 
 interface SheetData {
   sheet: {
@@ -54,7 +25,8 @@ interface SheetData {
 export default function SheetDetailPage() {
   const router = useRouter();
   const params = useParams();
-  const { data: session } = useSession();
+  const sheetId = params.id as string;
+
   const [sheetData, setSheetData] = useState<SheetData | null>(null);
   const [loading, setLoading] = useState(true);
   const [addFieldDialogOpen, setAddFieldDialogOpen] = useState(false);
@@ -62,17 +34,10 @@ export default function SheetDetailPage() {
   const [newFieldType, setNewFieldType] = useState<FieldType>('text');
   const [creating, setCreating] = useState(false);
 
-  useEffect(() => {
-    if (!session) {
-      router.push('/auth');
-      return;
-    }
-    fetchSheetData();
-  }, [session, params.id]);
-
-  const fetchSheetData = async () => {
+  // 加载表格数据
+  const loadData = async () => {
     try {
-      const res = await fetch(`/api/sheets/${params.id}`);
+      const res = await fetch(`/api/sheets/${sheetId}`);
       if (res.ok) {
         const data = await res.json();
         setSheetData(data);
@@ -86,12 +51,18 @@ export default function SheetDetailPage() {
     }
   };
 
+  useEffect(() => {
+    loadData();
+  }, [sheetId]);
+
+  // 添加字段
   const handleAddField = async (e: React.FormEvent) => {
     e.preventDefault();
-    setCreating(true);
+    if (!newFieldName.trim()) return;
 
+    setCreating(true);
     try {
-      const res = await fetch(`/api/sheets/${params.id}/fields`, {
+      const res = await fetch(`/api/sheets/${sheetId}/fields`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -104,36 +75,49 @@ export default function SheetDetailPage() {
         setAddFieldDialogOpen(false);
         setNewFieldName('');
         setNewFieldType('text');
-        fetchSheetData();
+        await loadData();
+      } else {
+        const data = await res.json();
+        alert(`添加字段失败: ${data.error || '未知错误'}`);
       }
     } catch (error) {
       console.error('Error adding field:', error);
+      alert('添加字段时发生错误');
     } finally {
       setCreating(false);
     }
   };
 
+  // 添加行
   const handleAddRow = async () => {
     try {
-      const res = await fetch(`/api/sheets/${params.id}/rows`, {
+      const res = await fetch(`/api/sheets/${sheetId}/rows`, {
         method: 'POST',
       });
 
       if (res.ok) {
-        fetchSheetData();
+        await loadData();
+      } else {
+        const data = await res.json();
+        alert(`添加行失败: ${data.error || '未知错误'}`);
       }
     } catch (error) {
       console.error('Error adding row:', error);
+      alert('添加行时发生错误');
     }
   };
 
+  // 更新单元格
   const handleCellUpdate = async (cellId: string, value: CellValue) => {
+    if (!cellId) return;
+
     try {
       await fetch(`/api/cells/${cellId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ value }),
       });
+
       // 更新本地状态
       setSheetData((prev) => {
         if (!prev) return null;
@@ -149,41 +133,16 @@ export default function SheetDetailPage() {
     }
   };
 
-  // 构建表格数据
-  const tableData = sheetData?.rows.map((row) => {
-    const rowData: any = { id: row.id };
-    sheetData.fields.forEach((field) => {
-      const cell = sheetData.cells.find(
-        (c) => c.rowId === row.id && c.fieldId === field.id
-      );
-      rowData[field.id] = cell || { id: '', rowId: row.id, fieldId: field.id, value: null };
-    });
-    return rowData;
-  }) || [];
-
-  // 构建列定义
-  const columns: ColumnDef<any>[] =
-    sheetData?.fields.map((field) => ({
-      id: field.id,
-      accessorKey: field.id,
-      header: field.name,
-      cell: ({ getValue }) => {
-        const cell = getValue() as Cell;
-        return (
-          <CellEditor
-            cell={cell}
-            field={field}
-            onUpdate={(value) => handleCellUpdate(cell.id, value)}
-          />
-        );
-      },
-    })) || [];
-
-  const table = useReactTable({
-    data: tableData,
-    columns,
-    getCoreRowModel: getCoreRowModel(),
-  });
+  // 获取单元格数据
+  const getCellValue = (rowId: string, fieldId: string): Cell => {
+    if (!sheetData) {
+      return { id: '', rowId, fieldId, value: null };
+    }
+    const cell = sheetData.cells.find(
+      (c) => c.rowId === rowId && c.fieldId === fieldId
+    );
+    return cell || { id: '', rowId, fieldId, value: null };
+  };
 
   if (loading) {
     return (
@@ -218,99 +177,107 @@ export default function SheetDetailPage() {
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="bg-white rounded-lg shadow">
-          <div className="p-4 border-b flex justify-between items-center">
-            <div className="flex gap-2">
-              <Dialog open={addFieldDialogOpen} onOpenChange={setAddFieldDialogOpen}>
-                <DialogTrigger asChild>
-                  <Button variant="outline" size="sm">
-                    <Plus className="h-4 w-4 mr-2" />
-                    添加字段
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>添加新字段</DialogTitle>
-                    <DialogDescription>为表格添加一个新列</DialogDescription>
-                  </DialogHeader>
-                  <form onSubmit={handleAddField} className="space-y-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="fieldName">字段名称</Label>
-                      <Input
-                        id="fieldName"
-                        value={newFieldName}
-                        onChange={(e) => setNewFieldName(e.target.value)}
-                        placeholder="请输入字段名称"
-                        required
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="fieldType">字段类型</Label>
-                      <Select value={newFieldType} onValueChange={(value) => setNewFieldType(value as FieldType)}>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="text">单行文本</SelectItem>
-                          <SelectItem value="longText">多行文本</SelectItem>
-                          <SelectItem value="number">数字</SelectItem>
-                          <SelectItem value="select">单选</SelectItem>
-                          <SelectItem value="multiSelect">多选</SelectItem>
-                          <SelectItem value="date">日期</SelectItem>
-                          <SelectItem value="datetime">日期时间</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="flex justify-end gap-2">
-                      <Button type="button" variant="outline" onClick={() => setAddFieldDialogOpen(false)}>
-                        取消
-                      </Button>
-                      <Button type="submit" disabled={creating}>
-                        {creating ? '创建中...' : '创建'}
-                      </Button>
-                    </div>
-                  </form>
-                </DialogContent>
-              </Dialog>
-              <Button variant="outline" size="sm" onClick={handleAddRow}>
-                <Plus className="h-4 w-4 mr-2" />
-                添加行
-              </Button>
-            </div>
+          <div className="p-4 border-b flex gap-2">
+            <Dialog open={addFieldDialogOpen} onOpenChange={setAddFieldDialogOpen}>
+              <DialogTrigger asChild>
+                <Button variant="outline" size="sm">
+                  <Plus className="h-4 w-4 mr-2" />
+                  添加字段
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>添加新字段</DialogTitle>
+                  <DialogDescription>为表格添加一个新列</DialogDescription>
+                </DialogHeader>
+                <form onSubmit={handleAddField} className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="fieldName">字段名称</Label>
+                    <Input
+                      id="fieldName"
+                      value={newFieldName}
+                      onChange={(e) => setNewFieldName(e.target.value)}
+                      placeholder="请输入字段名称"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="fieldType">字段类型</Label>
+                    <Select value={newFieldType} onValueChange={(value) => setNewFieldType(value as FieldType)}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="text">单行文本</SelectItem>
+                        <SelectItem value="longText">多行文本</SelectItem>
+                        <SelectItem value="number">数字</SelectItem>
+                        <SelectItem value="date">日期</SelectItem>
+                        <SelectItem value="datetime">日期时间</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <Button type="button" variant="outline" onClick={() => setAddFieldDialogOpen(false)}>
+                      取消
+                    </Button>
+                    <Button type="submit" disabled={creating}>
+                      {creating ? '创建中...' : '创建'}
+                    </Button>
+                  </div>
+                </form>
+              </DialogContent>
+            </Dialog>
+
+            <Button variant="outline" size="sm" onClick={handleAddRow}>
+              <Plus className="h-4 w-4 mr-2" />
+              添加行
+            </Button>
           </div>
 
           <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                {table.getHeaderGroups().map((headerGroup) => (
-                  <TableRow key={headerGroup.id}>
-                    {headerGroup.headers.map((header) => (
-                      <TableHead key={header.id}>
-                        {flexRender(header.column.columnDef.header, header.getContext())}
-                      </TableHead>
-                    ))}
-                  </TableRow>
-                ))}
-              </TableHeader>
-              <TableBody>
-                {table.getRowModel().rows.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={columns.length} className="text-center py-8 text-gray-500">
-                      暂无数据，点击"添加行"开始
-                    </TableCell>
-                  </TableRow>
+            <table className="w-full">
+              <thead className="bg-gray-50 border-b">
+                <tr>
+                  {sheetData.fields.map((field) => (
+                    <th
+                      key={field.id}
+                      className="px-4 py-3 text-left text-sm font-semibold text-gray-900"
+                    >
+                      {field.name}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {sheetData.rows.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={sheetData.fields.length || 1}
+                      className="px-4 py-8 text-center text-gray-500"
+                    >
+                      暂无数据，点击"添加行"或"添加字段"开始
+                    </td>
+                  </tr>
                 ) : (
-                  table.getRowModel().rows.map((row) => (
-                    <TableRow key={row.id}>
-                      {row.getVisibleCells().map((cell) => (
-                        <TableCell key={cell.id}>
-                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                        </TableCell>
-                      ))}
-                    </TableRow>
+                  sheetData.rows.map((row) => (
+                    <tr key={row.id} className="hover:bg-gray-50">
+                      {sheetData.fields.map((field) => {
+                        const cell = getCellValue(row.id, field.id);
+                        return (
+                          <td key={field.id} className="px-4 py-2">
+                            <CellEditor
+                              cell={cell}
+                              field={field}
+                              onUpdate={(value) => handleCellUpdate(cell.id, value)}
+                            />
+                          </td>
+                        );
+                      })}
+                    </tr>
                   ))
                 )}
-              </TableBody>
-            </Table>
+              </tbody>
+            </table>
           </div>
         </div>
       </main>
@@ -318,7 +285,7 @@ export default function SheetDetailPage() {
   );
 }
 
-// 单元格编辑器组件
+// 单元格编辑器
 function CellEditor({
   cell,
   field,
@@ -329,90 +296,94 @@ function CellEditor({
   onUpdate: (value: CellValue) => void;
 }) {
   const [isEditing, setIsEditing] = useState(false);
-  const [value, setValue] = useState(cell.value);
+  const [value, setValue] = useState<string>('');
 
-  const handleBlur = () => {
-    setIsEditing(false);
-    if (value !== cell.value) {
-      onUpdate(value);
-    }
-  };
-
-  const renderDisplay = () => {
+  const displayValue = () => {
     if (cell.value === null || cell.value === '') {
-      return <span className="text-gray-400">-</span>;
+      return '-';
+    }
+    if (field.type === 'date' || field.type === 'datetime') {
+      return new Date(cell.value as string).toLocaleDateString('zh-CN');
+    }
+    return String(cell.value);
+  };
+
+  const handleClick = () => {
+    setValue(cell.value ? String(cell.value) : '');
+    setIsEditing(true);
+  };
+
+  const handleSave = () => {
+    setIsEditing(false);
+    let finalValue: CellValue = value;
+
+    if (field.type === 'number') {
+      finalValue = value ? Number(value) : null;
+    } else if (value === '') {
+      finalValue = null;
     }
 
-    switch (field.type) {
-      case 'date':
-      case 'datetime':
-        return new Date(cell.value as string).toLocaleDateString('zh-CN');
-      case 'multiSelect':
-        return Array.isArray(cell.value) ? cell.value.join(', ') : '';
-      default:
-        return String(cell.value);
+    if (finalValue !== cell.value) {
+      onUpdate(finalValue);
     }
   };
 
-  const renderEditor = () => {
-    switch (field.type) {
-      case 'longText':
-        return (
-          <Textarea
-            value={String(value || '')}
-            onChange={(e) => setValue(e.target.value)}
-            onBlur={handleBlur}
-            autoFocus
-            rows={3}
-          />
-        );
-
-      case 'number':
-        return (
-          <Input
-            type="number"
-            value={String(value || '')}
-            onChange={(e) => setValue(e.target.value ? Number(e.target.value) : null)}
-            onBlur={handleBlur}
-            autoFocus
-          />
-        );
-
-      case 'date':
-      case 'datetime':
-        return (
-          <DatePicker
-            value={value ? new Date(value as string) : undefined}
-            onChange={(date) => {
-              setValue(date ? date.toISOString() : null);
-              setIsEditing(false);
-              onUpdate(date ? date.toISOString() : null);
-            }}
-          />
-        );
-
-      default:
-        return (
-          <Input
-            value={String(value || '')}
-            onChange={(e) => setValue(e.target.value)}
-            onBlur={handleBlur}
-            autoFocus
-          />
-        );
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && field.type !== 'longText') {
+      handleSave();
+    } else if (e.key === 'Escape') {
+      setIsEditing(false);
     }
   };
 
-  if (isEditing) {
-    return <div className="min-w-[200px]">{renderEditor()}</div>;
+  if (!isEditing) {
+    return (
+      <div
+        onClick={handleClick}
+        className="min-w-[150px] p-2 cursor-pointer hover:bg-gray-100 rounded text-sm"
+      >
+        {displayValue()}
+      </div>
+    );
+  }
+
+  if (field.type === 'longText') {
+    return (
+      <Textarea
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={handleSave}
+        onKeyDown={handleKeyDown}
+        autoFocus
+        rows={3}
+        className="min-w-[200px]"
+      />
+    );
+  }
+
+  if (field.type === 'number') {
+    return (
+      <Input
+        type="number"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={handleSave}
+        onKeyDown={handleKeyDown}
+        autoFocus
+        className="min-w-[150px]"
+      />
+    );
   }
 
   return (
-    <div
-      onClick={() => setIsEditing(true)}
-      className="min-w-[200px] p-2 cursor-pointer hover:bg-gray-50 rounded"
-    >
-      {renderDisplay()}
-    </div>
+    <Input
+      type="text"
+      value={value}
+      onChange={(e) => setValue(e.target.value)}
+      onBlur={handleSave}
+      onKeyDown={handleKeyDown}
+      autoFocus
+      className="min-w-[150px]"
+    />
   );
 }

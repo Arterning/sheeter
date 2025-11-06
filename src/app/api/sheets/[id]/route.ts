@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { sheets, fields, rows, cells } from '@/db/schema';
 import { requireAuth } from '@/lib/auth-helpers';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, inArray } from 'drizzle-orm';
 
 // 获取特定表格的详细信息（包括字段和数据）
 export async function GET(
@@ -39,15 +39,13 @@ export async function GET(
       .orderBy(rows.order);
 
     // 获取所有单元格数据
-    const sheetCells = await db
-      .select()
-      .from(cells)
-      .where(
-        eq(
-          cells.rowId,
-          db.select({ id: rows.id }).from(rows).where(eq(rows.sheetId, id)) as any
-        )
-      );
+    const rowIds = sheetRows.map((row) => row.id);
+    const sheetCells = rowIds.length > 0
+      ? await db
+          .select()
+          .from(cells)
+          .where(inArray(cells.rowId, rowIds))
+      : [];
 
     return NextResponse.json({
       sheet,
